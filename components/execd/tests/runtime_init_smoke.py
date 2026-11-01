@@ -199,14 +199,16 @@ def smoke_legacy():
     r = requests.get(f"{BASE_URL}/metrics", headers=auth(LEGACY_TOKEN), timeout=5)
     expect(r.status_code == 200, f"legacy-token /metrics expected 200, got {r.status_code}")
 
-    # A late /internal/init is accepted and becomes authoritative.
+    # Classic startup must not expose a late runtime-binding takeover.
     r = requests.post(f"{BASE_URL}/internal/init", json=init_payload(), timeout=30)
-    expect(r.status_code == 200, f"/internal/init failed: {r.status_code} {r.text}")
+    expect(r.status_code == 401, f"unauthenticated init expected 401, got {r.status_code}")
+    r = requests.post(f"{BASE_URL}/internal/init", headers=auth(LEGACY_TOKEN), json=init_payload(), timeout=5)
+    expect(r.status_code == 404, f"classic init route expected 404, got {r.status_code}")
 
     r = requests.get(f"{BASE_URL}/metrics", headers=auth(LEGACY_TOKEN), timeout=5)
-    expect(r.status_code == 401, f"legacy-token /metrics expected 401 after init, got {r.status_code}")
+    expect(r.status_code == 200, f"owner token must remain valid, got {r.status_code}")
     r = requests.get(f"{BASE_URL}/metrics", headers=auth(NEW_TOKEN), timeout=5)
-    expect(r.status_code == 200, f"new-token /metrics expected 200 after init, got {r.status_code}")
+    expect(r.status_code == 401, f"replacement token must remain invalid, got {r.status_code}")
 
     # Explicit preserve is independent of whether this is the first call.
     r = requests.post(
@@ -214,7 +216,7 @@ def smoke_legacy():
         json=init_payload(preserveRuntimeState=True),
         timeout=5,
     )
-    expect(r.status_code == 200, f"preserving /internal/init expected 200, got {r.status_code}")
+    expect(r.status_code == 401, f"preserving classic init expected 401, got {r.status_code}")
 
 
 def main():

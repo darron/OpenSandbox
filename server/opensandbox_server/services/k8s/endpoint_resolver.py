@@ -18,6 +18,8 @@ from typing import Any, Optional
 
 from opensandbox_server.api.schema import Endpoint
 from opensandbox_server.services.constants import (
+    EXECD_ACCESS_TOKEN_HEADER,
+    SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY,
     SANDBOX_EGRESS_AUTH_TOKEN_METADATA_KEY,
     SANDBOX_SECURE_ACCESS_TOKEN_METADATA_KEY,
 )
@@ -69,3 +71,13 @@ def _attach_secure_access_headers(endpoint: Endpoint, workload: Any) -> None:
         endpoint.headers,
         build_secure_access_headers(token),
     )
+
+
+def _attach_execd_auth_headers(endpoint: Endpoint, workload: Any, port: int) -> None:
+    if port != 44772:
+        return
+    token = _get_annotation(workload, SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY)
+    if token:
+        endpoint.headers = merge_endpoint_headers(
+            endpoint.headers, {EXECD_ACCESS_TOKEN_HEADER: token}
+        )

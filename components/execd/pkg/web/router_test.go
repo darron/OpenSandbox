@@ -15,6 +15,7 @@
 package web
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -97,6 +98,7 @@ func TestAccessTokenBindingHashIsAuthoritative(t *testing.T) {
 }
 
 func TestAccessTokenPreInitPathsSkipToken(t *testing.T) {
+	withRuntimeInit(t, true)
 	withTestBinding(t, &binding.RuntimeBinding{
 		HasAccessToken:  true,
 		AccessTokenHash: mustHash(t, "rotated-token"),
@@ -162,7 +164,7 @@ func TestRuntimeInitGateDisabledByDefault(t *testing.T) {
 
 func TestNewRouterServesInitRoutes(t *testing.T) {
 	withTestBinding(t, nil)
-	withRuntimeInit(t, false)
+	withRuntimeInit(t, true)
 	withManager(t, false)
 	r := NewRouter("")
 
@@ -179,6 +181,43 @@ func TestNewRouterServesInitRoutes(t *testing.T) {
 	// failed request does not initialize the runtime.
 	w = doRequest(t, r, http.MethodPost, "/internal/init", `{"sandboxId":"s","generation":0}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestClassicRouterRejectsRuntimeBindingTakeover(t *testing.T) {
+	withRuntimeInit(t, false)
+	withTestBinding(t, nil)
+	withManager(t, true)
+	r := NewRouter("owner-token")
+	payload := []byte(`{"sandboxId":"attacker","generation":1,"accessTokenHash":"` + binding.HashAccessToken("attacker-token") + `","preserveRuntimeState":true}`)
+	for _, token := range []string{"", "attacker-token", "owner-token"} {
+		req := httptest.NewRequest(http.MethodPost, "/internal/init", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(model.ApiAccessTokenHeader, token)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if token == "owner-token" {
+			require.Equal(t, http.StatusNotFound, w.Code)
+		} else {
+			require.Equal(t, http.StatusUnauthorized, w.Code)
+		}
+		require.Nil(t, binding.Current())
+	}
+	// The rejected init neither grants the attacker's token nor revokes the owner.
+	m := newMiddlewareTestRouter(t, "owner-token")
+	require.Equal(t, http.StatusUnauthorized, doRequest(t, m, http.MethodGet, "/api", "attacker-token").Code)
+	require.Equal(t, http.StatusOK, doRequest(t, m, http.MethodGet, "/api", "owner-token").Code)
+	for _, path := range []string{"/ping", "/ready"} {
+		require.Equal(t, http.StatusOK, doRequest(t, r, http.MethodGet, path, "").Code)
+	}
+}
+
+func TestClassicRouterWithoutTokenStillDoesNotRegisterInit(t *testing.T) {
+	withRuntimeInit(t, false)
+	withTestBinding(t, nil)
+	withManager(t, true)
+	r := NewRouter("")
+	require.Equal(t, http.StatusNotFound, doRequest(t, r, http.MethodPost, "/internal/init", "").Code)
+	require.Nil(t, binding.Current())
 }
 
 func mustHash(t *testing.T, raw string) [32]byte {

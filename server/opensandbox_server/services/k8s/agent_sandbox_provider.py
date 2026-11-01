@@ -19,6 +19,7 @@ Agent-sandbox workload provider implementation.
 import hashlib
 import logging
 import re
+import secrets
 from datetime import datetime
 from typing import Callable, Dict, List, Any, Optional
 
@@ -26,7 +27,10 @@ from kubernetes.client import ApiException
 
 from opensandbox_server.config import AppConfig
 from opensandbox_server.extensions.keys import BOOTSTRAP_EXECD_ISOLATION_KEY
-from opensandbox_server.services.constants import OPENSANDBOX_EGRESS_MITMPROXY_TRANSPARENT
+from opensandbox_server.services.constants import (
+    OPENSANDBOX_EGRESS_MITMPROXY_TRANSPARENT,
+    SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY,
+)
 from opensandbox_server.services.helpers import format_ingress_endpoint
 from opensandbox_server.api.schema import Endpoint, ImageSpec, PlatformSpec, Volume
 from opensandbox_server.services.k8s.agent_sandbox_template import AgentSandboxTemplateManager
@@ -207,6 +211,27 @@ class AgentSandboxProvider(WorkloadProvider):
         else:
             sandbox["spec"]["shutdownTime"] = expires_at.isoformat()
         merged_pod_spec = sandbox.get("spec", {}).get("podTemplate", {}).get("spec", {})
+        # This provider uses classic bootstrap, not runtime binding. Install
+        # trusted credentials after template merging so neither request env nor
+        # a template can replace or duplicate them.
+        execd_token = secrets.token_urlsafe(32)
+        sandbox["metadata"].setdefault("annotations", {})[
+            SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY
+        ] = execd_token
+        main_containers = [
+            container for container in merged_pod_spec["containers"]
+            if container["name"] == "sandbox"
+        ]
+        if len(main_containers) != 1:
+            raise ValueError("agent-sandbox template must contain exactly one container named sandbox")
+        main_container = main_containers[0]
+        main_container["env"] = [
+            item for item in main_container.get("env", [])
+            if item["name"] not in {"EXECD_ACCESS_TOKEN", "EXECD_RUNTIME_INIT"}
+        ] + [
+            {"name": "EXECD_ACCESS_TOKEN", "value": execd_token},
+            {"name": "EXECD_RUNTIME_INIT", "value": "false"},
+        ]
         if image_spec.auth:
             # Inject after the template merge: assigning before it would let
             # the runtime override replace template-provided imagePullSecrets.

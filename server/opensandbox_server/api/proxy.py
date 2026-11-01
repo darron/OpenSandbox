@@ -39,7 +39,11 @@ from opensandbox_server.api import lifecycle
 from opensandbox_server.config import get_config
 from opensandbox_server.api.schema import Endpoint
 from opensandbox_server.middleware.auth import SANDBOX_API_KEY_HEADER
-from opensandbox_server.services.constants import OPEN_SANDBOX_EGRESS_AUTH_HEADER, OPEN_SANDBOX_SECURE_ACCESS_HEADER
+from opensandbox_server.services.constants import (
+    EXECD_ACCESS_TOKEN_HEADER,
+    OPEN_SANDBOX_EGRESS_AUTH_HEADER,
+    OPEN_SANDBOX_SECURE_ACCESS_HEADER,
+)
 from opensandbox_server.tenants.context import set_current_tenant
 from opensandbox_server.tenants.provider import TenantProviderUnavailable
 
@@ -184,6 +188,13 @@ def _filter_proxy_headers(
             forwarded[key] = value
 
     if endpoint_headers:
+        if any(key.lower() == EXECD_ACCESS_TOKEN_HEADER.lower() for key in endpoint_headers):
+            # Header names are case-insensitive: don't let an inbound variant
+            # coexist with the trusted per-sandbox credential.
+            forwarded = {
+                key: value for key, value in forwarded.items()
+                if key.lower() != EXECD_ACCESS_TOKEN_HEADER.lower()
+            }
         endpoint_header_excluded = {
             OPEN_SANDBOX_SECURE_ACCESS_HEADER.lower(),
         } | FORWARDED_HEADERS

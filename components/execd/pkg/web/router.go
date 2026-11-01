@@ -27,17 +27,19 @@ import (
 	"github.com/alibaba/opensandbox/execd/pkg/web/model"
 )
 
-// Paths that must be reachable before the RuntimeBinding is applied (and
-// without the API access token): liveness, readiness, and the internal
-// runtime-init call.
+// Health paths are always reachable without the API access token.
 //
 // /internal/init is an internal control-plane protocol: it is not part of
 // the public execd API surface and carries no external compatibility
 // guarantee.
 var preInitPaths = map[string]struct{}{
-	"/ping":          {},
-	"/ready":         {},
-	"/internal/init": {},
+	"/ping":  {},
+	"/ready": {},
+}
+
+func isPreInitPath(path string) bool {
+	_, health := preInitPaths[path]
+	return health || (flag.RuntimeInit && path == "/internal/init")
 }
 
 func NewRouter(accessToken string) *gin.Engine {
@@ -50,7 +52,9 @@ func NewRouter(accessToken string) *gin.Engine {
 	r.Use(logMiddleware(), otelHTTPMetricsMiddleware(), runtimeInitGate(), accessTokenMiddleware(accessToken), ProxyMiddleware())
 
 	r.GET("/ping", controller.PingHandler)
-	r.POST("/internal/init", withInit(func(c *controller.InitController) { c.Init() }))
+	if flag.RuntimeInit {
+		r.POST("/internal/init", withInit(func(c *controller.InitController) { c.Init() }))
+	}
 	r.GET("/ready", withInit(func(c *controller.InitController) { c.Ready() }))
 
 	registerFilesystemRoutes(r.Group(""))
@@ -191,11 +195,11 @@ func withInit(fn func(*controller.InitController)) gin.HandlerFunc {
 // accessTokenMiddleware guards API entrypoints. Once a RuntimeBinding with
 // a token hash is applied (/internal/init is authoritative), request tokens
 // are verified against the hash; before that, the legacy container-env
-// token applies. /internal/init, /ready, and /ping are always reachable
-// without the token.
+// token applies. Health checks and the explicitly enabled runtime-init
+// protocol are reachable without the token.
 func accessTokenMiddleware(legacyToken string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if _, preInit := preInitPaths[ctx.FullPath()]; preInit {
+		if isPreInitPath(ctx.FullPath()) {
 			ctx.Next()
 			return
 		}
@@ -272,7 +276,7 @@ func runtimeInitGate() gin.HandlerFunc {
 			ctx.Next()
 			return
 		}
-		if _, preInit := preInitPaths[ctx.FullPath()]; preInit {
+		if isPreInitPath(ctx.FullPath()) {
 			ctx.Next()
 			return
 		}

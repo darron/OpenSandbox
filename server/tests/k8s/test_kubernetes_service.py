@@ -23,6 +23,8 @@ from pydantic import SecretStr
 
 from opensandbox_server.services.k8s.kubernetes_service import KubernetesSandboxService
 from opensandbox_server.services.constants import (
+    EXECD_ACCESS_TOKEN_HEADER,
+    SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY,
     OPEN_SANDBOX_EGRESS_AUTH_HEADER,
     OPEN_SANDBOX_SECURE_ACCESS_HEADER,
     SANDBOX_EGRESS_AUTH_TOKEN_METADATA_KEY,
@@ -2728,6 +2730,28 @@ class TestSignedEndpoint:
 
         assert endpoint.headers is not None
         assert endpoint.headers[OPEN_SANDBOX_SECURE_ACCESS_HEADER] == "static-token"
+
+    def test_signed_execd_endpoint_omits_permanent_execution_token(self, k8s_service):
+        self._setup_gateway_with_secure_access(k8s_service)
+        k8s_service.workload_provider.get_workload.return_value = {
+            "metadata": {"annotations": {
+                SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY: "permanent-execd-token",
+            }},
+        }
+        endpoint = k8s_service.get_endpoint("sbx-001", 44772, expires=2000000000)
+        assert EXECD_ACCESS_TOKEN_HEADER not in (endpoint.headers or {})
+
+    def test_unsigned_internal_execd_endpoint_attaches_execution_token(self, k8s_service):
+        k8s_service.workload_provider.get_workload.return_value = {
+            "metadata": {"annotations": {
+                SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY: "permanent-execd-token",
+            }},
+        }
+        k8s_service.workload_provider.get_internal_endpoint.return_value = Endpoint(
+            endpoint="10.0.0.1:44772",
+        )
+        endpoint = k8s_service.get_endpoint("sbx-001", 44772, resolve_internal=True)
+        assert endpoint.headers[EXECD_ACCESS_TOKEN_HEADER] == "permanent-execd-token"
 
     def test_signed_endpoint_header_mode(self, k8s_service):
         self._setup_gateway_with_secure_access(k8s_service, route_mode="header")

@@ -2677,6 +2677,17 @@ components:
           example:
             PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
             PYTHONUNBUFFERED: "1"
+        stdin:
+          type: string
+          format: byte
+          maxLength: 11184812
+          description: |
+            Complete standard input, base64 encoded, at most 8 MiB decoded (larger is a 400).
+            The command reads these bytes and then EOF, in foreground and background mode.
+            An empty string is an immediate EOF. When omitted, stdin is /dev/null.
+            This is not an interactive stream: execd has all of stdin before the command starts.
+            Unix only; Windows execd ignores this field.
+          example: aGVsbG8K
 
     CommandStatusResponse:
       type: object

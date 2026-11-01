@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -41,6 +42,7 @@ from opensandbox_server.services.constants import (
     OPENSANDBOX_RUNTIME_MOUNT_PATH,
     OPENSANDBOX_RUNTIME_VOLUME_NAME,
     SANDBOX_EGRESS_AUTH_TOKEN_METADATA_KEY,
+    SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY,
 )
 from opensandbox_server.services.k8s.agent_sandbox_provider import AgentSandboxProvider
 from opensandbox_server.services.k8s.image_pull_secret_helper import (
@@ -181,6 +183,66 @@ class TestAgentSandboxProvider:
             assert "shutdownTime" not in spec
         else:
             assert spec["shutdownTime"] == expires_at.isoformat()
+
+    @pytest.mark.parametrize("runtime_security", [None, {"privileged": False, "capabilities": {"drop": ["NET_RAW"]}}])
+    def test_create_workload_preserves_template_storage_and_security(
+        self, mock_k8s_client, monkeypatch, runtime_security
+    ):
+        provider = AgentSandboxProvider(mock_k8s_client, _app_config())
+        template = {
+            "spec": {"podTemplate": {"spec": {
+                "volumes": [
+                    {"name": "docker-data", "emptyDir": {"sizeLimit": "12Gi"}},
+                    {"name": "opensandbox-bin", "hostPath": {"path": "/untrusted-replacement"}},
+                ],
+                "containers": [{
+                    "name": "sandbox",
+                    "image": "ignored-template-image",
+                    "env": [{"name": "EXECD_ACCESS_TOKEN", "value": "template-token"}],
+                    "securityContext": {"privileged": True, "capabilities": {"add": ["SYS_ADMIN"]}},
+                    "volumeMounts": [
+                        {"name": "docker-data", "mountPath": "/var/lib/docker"},
+                        {"name": "opensandbox-bin", "mountPath": "/wrong-runtime-path"},
+                        {"name": "other", "mountPath": "/opt/opensandbox"},
+                    ],
+                }],
+            }}}
+        }
+        provider.template_manager._template = template
+        before = copy.deepcopy(template)
+        original = provider._build_pod_spec
+
+        def build(**kwargs):
+            spec = original(**kwargs)
+            if runtime_security is not None:
+                spec["containers"][0]["securityContext"] = runtime_security
+            return spec
+
+        monkeypatch.setattr(provider, "_build_pod_spec", build)
+        mock_k8s_client.create_custom_object.return_value = {"metadata": {"name": "test-id", "uid": "test-uid"}}
+        provider.create_workload(
+            sandbox_id="test-id", namespace="test-ns", image_spec=ImageSpec(uri="python:3.11"),
+            entrypoint=["/bin/bash"], env={}, resource_limits={"cpu": "1", "memory": "1Gi"},
+            labels={}, expires_at=None, execd_image="execd:test",
+        )
+        body = mock_k8s_client.create_custom_object.call_args.kwargs["body"]
+        spec = body["spec"]["podTemplate"]["spec"]
+        main = next(container for container in spec["containers"] if container["name"] == "sandbox")
+        assert main["image"] == "python:3.11"
+        assert main["securityContext"]["privileged"] is (runtime_security is None)
+        assert main["securityContext"]["capabilities"]["add"] == ["SYS_ADMIN"]
+        if runtime_security is not None:
+            assert main["securityContext"]["capabilities"]["drop"] == ["NET_RAW"]
+        assert {mount["name"]: mount["mountPath"] for mount in main["volumeMounts"]} == {
+            "opensandbox-bin": "/opt/opensandbox", "docker-data": "/var/lib/docker"
+        }
+        volumes = {volume["name"]: volume for volume in spec["volumes"]}
+        assert volumes["docker-data"]["emptyDir"] == {"sizeLimit": "12Gi"}
+        assert "hostPath" not in volumes["opensandbox-bin"]
+        assert [item["value"] for item in main["env"] if item["name"] == "EXECD_ACCESS_TOKEN"] == [
+            body["metadata"]["annotations"][SANDBOX_EXECD_ACCESS_TOKEN_METADATA_KEY]
+        ]
+        assert provider.template_manager._template == before
 
     def test_create_workload_injects_platform_node_selector(self, mock_k8s_client):
         provider = AgentSandboxProvider(mock_k8s_client, _app_config())

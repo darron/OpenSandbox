@@ -138,6 +138,43 @@ class AgentSandboxProvider(WorkloadProvider):
             candidates.append(legacy)
         return candidates
 
+    def _merge_template_pod_extras(self, pod_spec: Dict[str, Any]) -> None:
+        """Preserve trusted template storage/security defaults after list replacement."""
+        template_spec = (
+            self.template_manager.get_base_template()
+            .get("spec", {}).get("podTemplate", {}).get("spec", {})
+        )
+        volumes = pod_spec.setdefault("volumes", [])
+        volume_names = {volume["name"] for volume in volumes}
+        for volume in template_spec.get("volumes", []) or []:
+            if volume["name"] not in volume_names:
+                volumes.append(volume)
+                volume_names.add(volume["name"])
+
+        templates = [
+            container for container in template_spec.get("containers", []) or []
+            if container.get("name") == "sandbox"
+        ]
+        if len(templates) > 1:
+            raise ValueError("agent-sandbox template has duplicate sandbox containers")
+        if not templates:
+            return
+        target = next(container for container in pod_spec["containers"] if container["name"] == "sandbox")
+        defaults = templates[0]
+        security = defaults.get("securityContext")
+        if isinstance(security, dict):
+            target["securityContext"] = self.template_manager._deep_merge(
+                security, target.get("securityContext") or {}
+            )
+        mounts = target.setdefault("volumeMounts", [])
+        mount_names = {mount["name"] for mount in mounts}
+        mount_paths = {mount["mountPath"] for mount in mounts}
+        for mount in defaults.get("volumeMounts", []) or []:
+            if mount["name"] not in mount_names and mount["mountPath"] not in mount_paths:
+                mounts.append(mount)
+                mount_names.add(mount["name"])
+                mount_paths.add(mount["mountPath"])
+
     def create_workload(
         self,
         sandbox_id: str,
@@ -211,6 +248,7 @@ class AgentSandboxProvider(WorkloadProvider):
         else:
             sandbox["spec"]["shutdownTime"] = expires_at.isoformat()
         merged_pod_spec = sandbox.get("spec", {}).get("podTemplate", {}).get("spec", {})
+        self._merge_template_pod_extras(merged_pod_spec)
         # This provider uses classic bootstrap, not runtime binding. Install
         # trusted credentials after template merging so neither request env nor
         # a template can replace or duplicate them.

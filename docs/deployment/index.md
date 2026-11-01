@@ -347,6 +347,22 @@ Key Kubernetes-specific configuration sections:
 
 See [Configuration](/getting-started/configuration) for the full reference.
 
+### Agent-sandbox template storage and container security
+
+For the `agent-sandbox` workload provider, the trusted server template can supply
+extra `spec.podTemplate.spec.volumes` and `volumeMounts` and `securityContext` for
+the container named `sandbox`. These fields survive generation of the sandbox
+container. Runtime-provided volume names, mount names or paths, and security
+context values take precedence. Other template container fields, including
+image, command and environment, do not replace the generated container.
+
+This permits a Docker build profile to mount separate writable Docker storage
+and configure guest privileges on a Kata runtime. Keep the template scoped to
+the intended runtime and verify its containerd handler's
+`privileged_without_host_devices` setting before creating privileged guests.
+Test the resulting Pod and actual Docker build workflow; template settings alone
+do not establish filesystem, cgroup or device compatibility.
+
 ## Components on Kubernetes
 
 | Component | Deployment | Purpose |

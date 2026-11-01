@@ -258,3 +258,22 @@ func TestCommandAndSessionCwdUseTheirOwnEnvironment(t *testing.T) {
 	session := RunInSessionRequest{Command: "pwd", Cwd: "$ARGV_DIR"}
 	require.NoError(t, session.Validate())
 }
+
+func TestRunCommandRequestStdin(t *testing.T) {
+	var req RunCommandRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"argv":["cat"],"stdin":"aGkAIQ=="}`), &req))
+	require.Equal(t, []byte("hi\x00!"), req.Stdin)
+	require.NoError(t, req.Validate())
+
+	req = RunCommandRequest{}
+	require.NoError(t, json.Unmarshal([]byte(`{"command":"cat"}`), &req))
+	require.Nil(t, req.Stdin, "absent stdin must stay nil so the command keeps /dev/null")
+
+	req = RunCommandRequest{}
+	require.Error(t, json.Unmarshal([]byte(`{"command":"cat","stdin":"not base64!"}`), &req))
+
+	req = RunCommandRequest{Command: "cat", Stdin: make([]byte, MaxCommandStdinBytes+1)}
+	require.ErrorContains(t, req.Validate(), "stdin")
+	req.Stdin = req.Stdin[:MaxCommandStdinBytes]
+	require.NoError(t, req.Validate())
+}

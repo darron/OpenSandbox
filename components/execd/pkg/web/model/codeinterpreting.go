@@ -58,7 +58,13 @@ type RunCommandRequest struct {
 	Uid  *uint32           `json:"uid,omitempty"`
 	Gid  *uint32           `json:"gid,omitempty"`
 	Envs map[string]string `json:"envs,omitempty"`
+	// Stdin is the complete standard input, base64 encoded. The command
+	// reads it followed by EOF. Absent keeps stdin on /dev/null.
+	Stdin []byte `json:"stdin,omitempty"`
 }
+
+// MaxCommandStdinBytes bounds the decoded stdin of one command request.
+const MaxCommandStdinBytes = 8 << 20
 
 // UnmarshalJSON rejects missing, conflicting or null command inputs.
 func (r *RunCommandRequest) UnmarshalJSON(data []byte) error {
@@ -111,6 +117,9 @@ func (r *RunCommandRequest) Validate() error {
 	}
 	if r.Gid != nil && r.Uid == nil {
 		return errors.New("uid is required when gid is provided")
+	}
+	if len(r.Stdin) > MaxCommandStdinBytes {
+		return fmt.Errorf("stdin is %d bytes; the limit is %d", len(r.Stdin), MaxCommandStdinBytes)
 	}
 	return runtime.ValidateCommandWorkingDir(r.Cwd, r.Envs)
 }

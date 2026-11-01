@@ -44,7 +44,10 @@ type ExecuteCodeRequest struct {
 	Envs     map[string]string `json:"envs"`
 	Uid      *uint32           `json:"uid,omitempty"`
 	Gid      *uint32           `json:"gid,omitempty"`
-	Hooks    ExecuteResultHook
+	// Stdin, when non-nil, is the complete standard input for a shell
+	// command; the child reads it and then EOF. Nil keeps /dev/null.
+	Stdin []byte `json:"-"`
+	Hooks ExecuteResultHook
 }
 
 // SetDefaultHooks installs stdout logging fallbacks for unset hooks.

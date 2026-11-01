@@ -250,6 +250,15 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
+	stdin, err := openCommandStdin(request.Stdin)
+	if err != nil {
+		return fmt.Errorf("prepare stdin: %w", err)
+	}
+	if stdin != nil {
+		cmd.Stdin = stdin
+		defer stdin.Close()
+	}
+
 	done := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -412,9 +421,18 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 	cmd.Stdout = pipe
 	cmd.Stderr = pipe
 
-	// use DevNull as stdin so interactive programs exit immediately.
-	devNull, err := os.Open(os.DevNull)
-	if err == nil {
+	// use DevNull as stdin so interactive programs exit immediately,
+	// unless the request supplied its complete stdin.
+	stdin, err := openCommandStdin(request.Stdin)
+	if err != nil {
+		cancel()
+		_ = pipe.Close()
+		return fmt.Errorf("prepare stdin: %w", err)
+	}
+	if stdin != nil {
+		cmd.Stdin = stdin
+		defer stdin.Close()
+	} else if devNull, err := os.Open(os.DevNull); err == nil {
 		cmd.Stdin = devNull
 		defer devNull.Close()
 	}

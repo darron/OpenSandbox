@@ -186,6 +186,7 @@ func (c *CodeInterpretingController) buildExecuteCommandRequest(request model.Ru
 			Gid:      request.Gid,
 			Uid:      request.Uid,
 			Envs:     request.Envs,
+			Stdin:    request.Stdin,
 		}
 	} else {
 		return &runtime.ExecuteCodeRequest{
@@ -197,6 +198,7 @@ func (c *CodeInterpretingController) buildExecuteCommandRequest(request model.Ru
 			Gid:      request.Gid,
 			Uid:      request.Uid,
 			Envs:     request.Envs,
+			Stdin:    request.Stdin,
 		}
 	}
 }

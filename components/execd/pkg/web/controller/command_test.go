@@ -59,6 +59,16 @@ func TestBuildExecuteCommandRequestForwardsEnvsBackground(t *testing.T) {
 	require.True(t, reflect.DeepEqual(execReq.Envs, envs), "expected envs to be forwarded")
 }
 
+func TestBuildExecuteCommandRequestForwardsStdin(t *testing.T) {
+	ctrl := &CodeInterpretingController{}
+	for _, background := range []bool{false, true} {
+		req := model.RunCommandRequest{Argv: []string{"cat"}, Background: background, Stdin: []byte("in\x00")}
+		require.Equal(t, []byte("in\x00"), ctrl.buildExecuteCommandRequest(req).Stdin)
+		req.Stdin = nil
+		require.Nil(t, ctrl.buildExecuteCommandRequest(req).Stdin)
+	}
+}
+
 func setupCommandController(method, path string) (*CodeInterpretingController, *httptest.ResponseRecorder) {
 	ctx, w := newTestContext(method, path, nil)
 	ctrl := NewCodeInterpretingController(ctx)
